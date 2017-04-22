@@ -2,7 +2,7 @@
 
 # Overview
 
-Clipper is a macOS "launch agent" &mdash; or as a process that you can run as a daemon on Linux &mdash; that runs in the background providing a service that exposes the local clipboard to tmux sessions and other processes running both locally and remotely.
+Clipper is a macOS "launch agent" &mdash; or Linux daemon &mdash; that runs in the background providing a service that exposes the local clipboard to tmux sessions and other processes running both locally and remotely.
 
 # At a glance
 
@@ -78,7 +78,7 @@ or, in version of tmux prior to 1.8 (which don't have the `copy-pipe` command):
 
     bind-key y run-shell "tmux save-buffer - | pbcopy"
 
-In practice, this won't work on versions of macOS prior to 10.10 "Yosemite" because tmux uses the `daemon(3)` system call, which ends up putting it in a different execution context from which it cannot interact with the system clipboard. For (much) more detail, see:
+In practice, this won't work on versions of macOS prior to 10.10 "Yosemite" or after 10.11 "El Capitan" &mdash; there was a brief lapse during those versions where it did work &mdash; because tmux uses the `daemon(3)` system call, which ends up putting it in a different execution context from which it cannot interact with the system clipboard. For (much) more detail, see:
 
 - http://developer.apple.com/library/mac/#technotes/tn2083/_index.html
 
@@ -120,22 +120,27 @@ Finally, if you want to do things manually, you can clone from the authoritative
 
 If you plan to use Clipper as a launch agent you'll need to put it somewhere the system can find it (ie. at a location in the standard PATH, such as under `/usr/local/bin/`) and update the included property list file to specify the full path to the location where you installed the Clipper executable.
 
-The following example shows how you would install the built Clipper executable to `/usr/local/bin/` after cloning the repo and performing a build. It also shows how you would set up Clipper as a launch agent and start it running:
+The following examples show how you would install the built Clipper executable to `/usr/local/bin/` after cloning the repo and performing a build. It also shows how you would set up Clipper as a launch agent (on macOS) or systemd service (on Linux) and start it running:
+
+#### macOS example setup
 
 macOS example setup
 
     sudo cp clipper /usr/local/bin
-    cp contrib/tcp-port/com.wincent.clipper.plist ~/Library/LaunchAgents/
+    cp contrib/darwin/tcp-port/com.wincent.clipper.plist ~/Library/LaunchAgents/
     launchctl load -w -S Aqua ~/Library/LaunchAgents/com.wincent.clipper.plist
 
-Linux example setup
+Note that these commands may fail to do the right thing inside of a tmux session under macOS. Run `launchctl` from outside of tmux, otherwise Clipper may find itself in the wrong execution context. Similarly, when running manually, either run Clipper outside of tmux or use the aforementioned `reattach-to-user-space` as a wrapper.
 
-    cp clipper ~/bin/
-    cp contrib/linux-systemd-service/cliper.service ~/.config/systemd/user
+#### Linux example setup
+
+    sudo cp clipper /usr/local/bin
+    cp contrib/linux/systemd-service/clipper.service ~/.config/systemd/user
     systemctl --user daemon-reload
     systemctl --user enable clipper.service
     systemctl --user start clipper.service
 
+#### Manual setup
 
 Alternatively, if you'd like to run Clipper manually, you can do so with:
 
@@ -144,28 +149,23 @@ Alternatively, if you'd like to run Clipper manually, you can do so with:
               [--logfile=LOGFILE] \
               [--config=CONFIG_FILE]
 
-Note that these commands may fail to do the right thing inside of a tmux session under macOS. Run `launchctl` from outside of tmux, otherwise Clipper may find itself in the wrong execution context. Similarly, when running manually, either run Clipper outside of tmux or use the aforementioned `reattach-to-user-space` as a wrapper.
-
 ## Uninstalling
 
 A Homebrew installation can be reversed with:
 
     brew uninstall clipper
 
-A manual launch agent installation can be reversed with:
+A manual launch agent installation can be reversed with the following (and as before, note that you should probably only run `launchctl` outside of a tmux session):
 
     launchctl unload ~/Library/LaunchAgents/com.wincent.clipper.plist
     rm ~/Library/LaunchAgents/com.wincent.clipper.plist
     sudo rm /usr/local/bin/clipper
 
-On Linux
+On Linux:
 
     systemctl --user stop clipper.service
     systemctl --user disable clipper.service
-    rm ~/bin/clipper
-
-
-As before, note that you should probably only run `launchctl` outside of a tmux session.
+    sudo rm /usr/local/bin/clipper
 
 To kill a manually-launched instance of Clipper, just hit Control+C in the terminal where it is running.
 
@@ -230,7 +230,7 @@ Note that explicit command line options — including options supplied via a pli
 
 ### `--address`
 
-Specifies the address on which the Clipper daemon will listen for connections. Defaults to "localhost". This is a reasonable default, but you may wish to set it to a filesystem path instead in order to have Clipper create a UNIX domain socket at that location and listen on that instead.
+Specifies the address on which the Clipper daemon will listen for connections. Defaults to "localhost", and listens on both IPv4 and IPv6 addresses, when available. This is a reasonable default, but you may wish to set it to a filesystem path instead in order to have Clipper create a UNIX domain socket at that location and listen on that instead (for better security: see "Security" below for more). Or perhaps you would like to *only* listen on IPv4 *or* IPv6, in which case you would use "127.0.0.1" or "[::1]" respectively (the square brackets around the IPv6 address are needed by the Go networking libraries in order to disambiguate the colons in the address from colons used to separate it from the port number). Note that if you see an error of the form "too many colons in address", it is likely that you have forgotten to wrap the IPv6 address in surrounding brackets.
 
 ### `--port`
 
@@ -459,6 +459,14 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # History
+
+## 0.4.2 (14 April 2017)
+
+- Fix binding to all interfaces instead of just the loopback interface when no address is provided ([#9](https://github.com/wincent/clipper/issues/9)).
+
+## 0.4.1 (13 December 2016)
+
+- Create socket with user-only permissions, for better security.
 
 ## 0.4 (28 November 2016)
 

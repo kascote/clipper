@@ -191,6 +191,7 @@ func mergeSettings() {
 }
 
 func main() {
+	syscall.Umask(0077)
 	// Set this up before we even know where our logfile is, in case we have to
 	// bail early and print something to stderr.
 	log.SetPrefix("clipper: ")
@@ -231,47 +232,76 @@ func main() {
 	}
 
 	var addr string
-	var listenType string
+	var listeners []net.Listener
 	if isPath(settings.Address) {
 		addr = expandPath(settings.Address)
 	} else {
 		addr = settings.Address
 	}
 	if strings.HasPrefix(addr, "/") {
-		listenType = "unix"
 		log.Print("Starting UNIX domain socket server at ", addr)
+		listeners = append(listeners, listen("unix", addr, -1))
 	} else {
-		listenType = "tcp"
 		if addr == "" {
 			log.Print("Starting TCP server on loopback interface")
+			listeners = append(listeners, listen("tcp4", "127.0.0.1", settings.Port))
+			listeners = append(listeners, listen("tcp6", "[::1]", settings.Port))
 		} else {
 			log.Print("Starting TCP server on ", addr)
+			listeners = append(listeners, listen("tcp", settings.Address, settings.Port))
 		}
-		addr = fmt.Sprintf("%s:%d", settings.Address, settings.Port)
 	}
-	listener, err := net.Listen(listenType, addr)
-	if err != nil {
-		log.Fatal(err)
+
+	listeners = filter(listeners, func(l net.Listener) bool {
+		return l != nil
+	})
+	if len(listeners) == 0 {
+		log.Fatal("Failed to establish a listener")
 	}
-	defer listener.Close()
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				log.Print(err)
-				return
-			}
+	for i := range listeners {
+		if listeners[i] != nil {
+			defer listeners[i].Close()
+			go func(listener net.Listener) {
+				for {
+					conn, err := listener.Accept()
+					if err != nil {
+						log.Print(err)
+						return
+					}
 
-			go handleConnection(conn)
+					go handleConnection(conn)
+				}
+			}(listeners[i])
 		}
-	}()
+	}
 
 	// Need to catch signals in order for `defer`-ed clean-up items to run.
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGTERM)
 	sig := <-c
 	log.Print("Got signal ", sig)
+}
+
+func listen(listenType string, addr string, port int) net.Listener {
+	if port >= 0 {
+		addr = fmt.Sprintf("%s:%d", addr, port)
+	}
+	listener, err := net.Listen(listenType, addr)
+	if err != nil {
+		log.Print(err)
+	}
+	return listener
+}
+
+func filter(ls []net.Listener, fn func(net.Listener) bool) []net.Listener {
+	var out []net.Listener
+	for i := range ls {
+		if fn(ls[i]) {
+			out = append(out, ls[i])
+		}
+	}
+	return out
 }
 
 // Returns true for things which look like paths (start with "~", "." or "/").
